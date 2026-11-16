@@ -1,0 +1,30 @@
+import { NextAuthOptions } from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+      authorization: {
+        params: {
+          prompt: "select_account",
+          access_type: "offline",
+          response_type: "code",
+        },
+      },
+    }),
+  ],
+  secret: process.env.NEXTAUTH_SECRET || "mindora-nextauth-secret-key-32-chars-long-minimum-jwt",
+  pages: {
+    signIn: "/",
+  },
+  callbacks: {
+    async session({ session, token }) {
+      if (session.user && token.sub) {
+        session.user.name = session.user.name || token.name || "Student User";
+      }
+      return session;
+    },
+  },
+};
