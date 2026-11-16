@@ -14,14 +14,26 @@ export interface DailyLog {
   mood: MoodRating;
   privateNotes?: string;
   isAutoTracked?: boolean;
+  // MongoDB backend fields
+  userId?: string;
+  moodScore?: number; // 1-10
+  stressLevel?: number; // 1-10
+  screenTimeMinutes?: number;
+  notes?: string;
+  syncMode?: "manual" | "auto";
 }
 
 export interface HabitItem {
   id: string;
   title: string;
-  category: "screen" | "sleep" | "body" | "mind" | "social";
-  description: string;
+  category: "screen" | "sleep" | "body" | "mind" | "social" | string;
+  description?: string;
   completed: boolean;
+  // MongoDB backend fields
+  userId?: string;
+  targetFrequency?: string;
+  completedDates?: string[];
+  streak?: number;
 }
 
 export interface ReminderSetting {

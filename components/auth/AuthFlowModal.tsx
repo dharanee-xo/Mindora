@@ -14,7 +14,7 @@ interface AuthFlowModalProps {
 
 export default function AuthFlowModal({
   isOpen,
-  initialView = "splash",
+  initialView = "login",
   onClose,
   onLoginSuccess,
 }: AuthFlowModalProps) {
@@ -34,15 +34,15 @@ export default function AuthFlowModal({
       <div className="fixed bottom-1/4 right-1/4 w-[450px] h-[450px] bg-[#8A2BE2]/15 rounded-full blur-[130px] pointer-events-none -z-10" />
 
       {/* Main Container Frame */}
-      <div className="relative w-full max-w-2xl my-auto">
+      <div className="relative w-full max-w-md my-auto">
         {/* Floating Top Close Bar */}
-        <div className="absolute top-4 right-4 z-20">
+        <div className="absolute top-3 right-3 z-20">
           <button
             onClick={onClose}
-            title="Close / Continue to Dashboard"
-            className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white border border-white/10 backdrop-blur-md transition-all shadow-lg"
+            title="Close"
+            className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white border border-white/10 backdrop-blur-md transition-all shadow-lg"
           >
-            <XIcon className="w-5 h-5" />
+            <XIcon className="w-4 h-4" />
           </button>
         </div>
 
@@ -51,19 +51,11 @@ export default function AuthFlowModal({
           {currentView === "splash" ? (
             <SplashScreen
               onGetStarted={() => setCurrentView("login")}
-              onExploreGuest={() => {
-                onLoginSuccess("Anonymous_Student_Guest");
-                onClose();
-              }}
             />
           ) : (
             <LoginView
               onSuccess={handleAuthSuccess}
               onBackToSplash={() => setCurrentView("splash")}
-              onContinueGuest={() => {
-                onLoginSuccess("Anonymous_Student_Guest");
-                onClose();
-              }}
             />
           )}
         </div>

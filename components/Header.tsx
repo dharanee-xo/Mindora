@@ -150,7 +150,7 @@ export default function Header({
       {/* Auth Modal (if triggered internally) */}
       <AuthFlowModal
         isOpen={isAuthOpen}
-        initialView="splash"
+        initialView="login"
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={handleLoginSuccess}
       />

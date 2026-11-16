@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import AuthProvider from "@/components/auth/AuthProvider";
 
 export const metadata: Metadata = {
   title: "MINDORA — Digital Youth Wellness Platform",
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-[#07090e] text-slate-100 antialiased selection:bg-[#00F5D4]/30 selection:text-white">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

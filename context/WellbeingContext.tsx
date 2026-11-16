@@ -10,14 +10,23 @@ interface WellbeingContextType {
   reminders: ReminderSetting[];
   activeLog: DailyLog;
   habitCompletionRate: number;
-  addOrUpdateLog: (log: Omit<DailyLog, "id">, existingId?: string) => void;
+  isLoadingLogs: boolean;
+  isLoadingHabits: boolean;
+  isSaving: boolean;
+  apiError: string | null;
+
+  // Actions wired to real MongoDB APIs
+  addOrUpdateLog: (log: Omit<DailyLog, "id">, existingId?: string) => Promise<void>;
   deleteLog: (id: string) => void;
-  toggleHabit: (id: string) => void;
+  toggleHabit: (id: string) => Promise<void>;
+  createHabit: (title: string, category: string, targetFrequency?: string) => Promise<void>;
+  deleteHabit: (id: string) => Promise<void>;
   toggleReminder: (id: string) => void;
   updateReminderFrequency: (id: string, frequency: string) => void;
-  updateTodayMood: (mood: MoodRating) => void;
-  clearAllData: () => void;
+  updateTodayMood: (mood: MoodRating) => Promise<void>;
+  clearAllData: () => Promise<void>;
   resetToDemoData: () => void;
+  refreshData: () => Promise<void>;
 
   // Dual Monitoring System State
   isAutoMonitoringEnabled: boolean;
@@ -29,111 +38,10 @@ interface WellbeingContextType {
   enableAutoMonitoring: () => void;
   disableAutoMonitoring: () => void;
   pauseResumeAutoMonitoring: () => void;
-  syncAutoDataToToday: () => void;
+  syncAutoDataToToday: () => Promise<void>;
 }
 
-const defaultLogs: DailyLog[] = [
-  {
-    id: "log-1",
-    date: "2026-11-10",
-    dayLabel: "Mon",
-    screenTimeHours: 6.8,
-    socialMediaHours: 2.5,
-    gamingHours: 1.5,
-    sleepHours: 6.2,
-    studyHours: 3.5,
-    breaksCount: 3,
-    physicalActivityMinutes: 25,
-    mood: 2,
-    privateNotes: "Mid-term exam stress caused late-night scrolling.",
-  },
-  {
-    id: "log-2",
-    date: "2026-11-11",
-    dayLabel: "Tue",
-    screenTimeHours: 7.1,
-    socialMediaHours: 2.8,
-    gamingHours: 1.8,
-    sleepHours: 5.9,
-    studyHours: 4.0,
-    breaksCount: 2,
-    physicalActivityMinutes: 20,
-    mood: 2,
-    privateNotes: "Felt drained by 4 PM. Needed more water and breaks.",
-  },
-  {
-    id: "log-3",
-    date: "2026-11-12",
-    dayLabel: "Wed",
-    screenTimeHours: 5.5,
-    socialMediaHours: 1.9,
-    gamingHours: 1.0,
-    sleepHours: 7.2,
-    studyHours: 4.5,
-    breaksCount: 5,
-    physicalActivityMinutes: 40,
-    mood: 3,
-    privateNotes: "Tried the 20-20-20 eye break rule today, noticeable focus improvement.",
-  },
-  {
-    id: "log-4",
-    date: "2026-11-13",
-    dayLabel: "Thu",
-    screenTimeHours: 6.0,
-    socialMediaHours: 2.0,
-    gamingHours: 1.2,
-    sleepHours: 6.8,
-    studyHours: 4.2,
-    breaksCount: 4,
-    physicalActivityMinutes: 35,
-    mood: 3,
-    privateNotes: "Moderate productivity, kept social notifications off during library hours.",
-  },
-  {
-    id: "log-5",
-    date: "2026-11-14",
-    dayLabel: "Fri",
-    screenTimeHours: 5.2,
-    socialMediaHours: 1.4,
-    gamingHours: 0.8,
-    sleepHours: 7.6,
-    studyHours: 5.0,
-    breaksCount: 6,
-    physicalActivityMinutes: 50,
-    mood: 4,
-    privateNotes: "Went for evening walk around campus lake, sleep was noticeably deeper.",
-  },
-  {
-    id: "log-6",
-    date: "2026-11-15",
-    dayLabel: "Sat",
-    screenTimeHours: 4.9,
-    socialMediaHours: 1.3,
-    gamingHours: 0.7,
-    sleepHours: 8.1,
-    studyHours: 3.8,
-    breaksCount: 5,
-    physicalActivityMinutes: 55,
-    mood: 5,
-    privateNotes: "Kept laptop closed until after lunch. Highly recommend.",
-  },
-  {
-    id: "log-7",
-    date: "2026-11-16",
-    dayLabel: "Sun (Today)",
-    screenTimeHours: 4.8,
-    socialMediaHours: 1.1,
-    gamingHours: 0.6,
-    sleepHours: 7.8,
-    studyHours: 4.5,
-    breaksCount: 6,
-    physicalActivityMinutes: 45,
-    mood: 4,
-    privateNotes: "Balanced weekend rhythm. Ready for the upcoming academic week.",
-  },
-];
-
-const defaultHabits: HabitItem[] = [
+const defaultHabitCatalog: HabitItem[] = [
   {
     id: "habit-1",
     title: "Balanced Screen Leisure",
@@ -217,94 +125,110 @@ const defaultReminders: ReminderSetting[] = [
   },
 ];
 
+const fallbackTodayLog: DailyLog = {
+  id: "today-default",
+  date: new Date().toISOString().split("T")[0],
+  dayLabel: "Today",
+  screenTimeHours: 4.8,
+  socialMediaHours: 1.2,
+  gamingHours: 0.5,
+  sleepHours: 7.5,
+  studyHours: 4.5,
+  breaksCount: 5,
+  physicalActivityMinutes: 30,
+  mood: 3,
+  privateNotes: "",
+  isAutoTracked: false,
+  moodScore: 6,
+  stressLevel: 3,
+};
+
 const WellbeingContext = createContext<WellbeingContextType | undefined>(undefined);
 
 export function WellbeingProvider({ children }: { children: React.ReactNode }) {
   const [userId, setUserId] = useState<string>("anonymous_student");
-  const [logs, setLogs] = useState<DailyLog[]>(defaultLogs);
-  const [habits, setHabits] = useState<HabitItem[]>(defaultHabits);
+  const [logs, setLogs] = useState<DailyLog[]>([fallbackTodayLog]);
+  const [habits, setHabits] = useState<HabitItem[]>(defaultHabitCatalog);
   const [reminders, setReminders] = useState<ReminderSetting[]>(defaultReminders);
-  const [isClient, setIsClient] = useState(false);
 
-  // Auto-monitoring HUD & background listener state
+  const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(true);
+  const [isLoadingHabits, setIsLoadingHabits] = useState<boolean>(true);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+
+  // Dual Monitoring State
   const [isAutoMonitoringEnabled, setIsAutoMonitoringEnabled] = useState(false);
   const [isPermissionGranted, setIsPermissionGranted] = useState(false);
-  const [activeSessionSeconds, setActiveSessionSeconds] = useState(2535); // demo start 42m 15s
+  const [activeSessionSeconds, setActiveSessionSeconds] = useState(2535); // 42m 15s
   const [sessionStatus, setSessionStatus] = useState<"active" | "idle" | "paused">("paused");
   const [autoDetectedScreenHours, setAutoDetectedScreenHours] = useState(4.8);
   const [autoDetectedBreaks, setAutoDetectedBreaks] = useState(6);
 
   const lastActivityRef = useRef<number>(Date.now());
 
-  // Initialize from LocalStorage & MongoDB
-  useEffect(() => {
-    setIsClient(true);
-    let activeUser = "anonymous_student";
+  // Function to fetch real data from MongoDB APIs
+  const refreshData = async () => {
     try {
-      const savedUser = localStorage.getItem("mindora_active_user");
-      if (savedUser) {
-        activeUser = savedUser;
-        setUserId(savedUser);
+      setApiError(null);
+      setIsLoadingLogs(true);
+      setIsLoadingHabits(true);
+
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      setUserId(activeUser);
+
+      // 1. Fetch real daily logs from MongoDB
+      const logsRes = await fetch("/api/logs", {
+        headers: { "x-user-id": activeUser },
+      });
+
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        if (logsData.success && Array.isArray(logsData.logs) && logsData.logs.length > 0) {
+          // Sort ascending for chart chronological display
+          const sorted = [...logsData.logs].sort((a, b) => a.date.localeCompare(b.date));
+          setLogs(sorted);
+        }
       }
 
-      const savedLogs = localStorage.getItem("mindora_logs");
-      if (savedLogs) setLogs(JSON.parse(savedLogs));
+      // 2. Fetch real habits from MongoDB
+      const habitsRes = await fetch("/api/habits", {
+        headers: { "x-user-id": activeUser },
+      });
 
-      const savedHabits = localStorage.getItem("mindora_habits");
-      if (savedHabits) setHabits(JSON.parse(savedHabits));
+      if (habitsRes.ok) {
+        const habitsData = await habitsRes.json();
+        if (habitsData.success && Array.isArray(habitsData.habits) && habitsData.habits.length > 0) {
+          setHabits(habitsData.habits);
+        }
+      }
+    } catch (err: any) {
+      console.warn("MongoDB initial fetch warning:", err);
+      setApiError(err.message || "Failed to sync with MongoDB.");
+    } finally {
+      setIsLoadingLogs(false);
+      setIsLoadingHabits(false);
+    }
+  };
 
-      const savedReminders = localStorage.getItem("mindora_reminders");
-      if (savedReminders) setReminders(JSON.parse(savedReminders));
+  // Initial load on mount
+  useEffect(() => {
+    try {
+      const savedUser = localStorage.getItem("mindora_active_user");
+      if (savedUser) setUserId(savedUser);
 
-      const savedAutoEnabled = localStorage.getItem("mindora_auto_monitoring");
-      if (savedAutoEnabled === "true") {
+      const savedAuto = localStorage.getItem("mindora_auto_monitoring");
+      if (savedAuto === "true") {
         setIsAutoMonitoringEnabled(true);
         setIsPermissionGranted(true);
       }
     } catch (e) {
-      console.warn("Could not load from localStorage:", e);
+      console.warn("Storage check error:", e);
     }
 
-    // Connect & Sync from MongoDB Backend
-    fetch(`/api/logs?userId=${encodeURIComponent(activeUser)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.logs && data.logs.length > 0) {
-          setLogs(data.logs);
-        }
-      })
-      .catch((e) => console.warn("MongoDB initial logs sync:", e));
-
-    fetch(`/api/habits?userId=${encodeURIComponent(activeUser)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success && data.record && data.record.completedHabitIds) {
-          const completedIds: string[] = data.record.completedHabitIds;
-          setHabits((prev) =>
-            prev.map((h) => ({
-              ...h,
-              completed: completedIds.includes(h.id),
-            }))
-          );
-        }
-      })
-      .catch((e) => console.warn("MongoDB initial habits sync:", e));
+    refreshData();
   }, []);
 
-  // Save to LocalStorage
-  useEffect(() => {
-    if (!isClient) return;
-    try {
-      localStorage.setItem("mindora_logs", JSON.stringify(logs));
-      localStorage.setItem("mindora_habits", JSON.stringify(habits));
-      localStorage.setItem("mindora_reminders", JSON.stringify(reminders));
-      localStorage.setItem("mindora_auto_monitoring", isAutoMonitoringEnabled.toString());
-    } catch (e) {
-      console.warn("Could not save to localStorage:", e);
-    }
-  }, [logs, habits, reminders, isAutoMonitoringEnabled, isClient]);
-
-  // Live Browser Activity Listener
+  // Live Browser Activity Listener (Page Visibility API)
   useEffect(() => {
     if (!isAutoMonitoringEnabled || sessionStatus === "paused") return;
 
@@ -357,57 +281,155 @@ export function WellbeingProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isAutoMonitoringEnabled, sessionStatus]);
 
-  const activeLog = logs[logs.length - 1] || defaultLogs[defaultLogs.length - 1];
+  const activeLog = logs[logs.length - 1] || fallbackTodayLog;
 
-  const habitCompletionRate = Math.round(
-    (habits.filter((h) => h.completed).length / habits.length) * 100
-  );
+  const habitCompletionRate = habits.length > 0
+    ? Math.round((habits.filter((h) => h.completed).length / habits.length) * 100)
+    : 0;
 
-  const addOrUpdateLog = (newLogData: Omit<DailyLog, "id">, existingId?: string) => {
-    if (existingId) {
-      setLogs((prev) =>
-        prev.map((log) => (log.id === existingId ? { ...newLogData, id: existingId } : log))
-      );
-    } else {
-      const newEntry: DailyLog = {
-        ...newLogData,
-        id: `log-${Date.now()}`,
-      };
-      setLogs((prev) => [...prev, newEntry]);
+  // Real MongoDB API: Add or update daily log
+  const addOrUpdateLog = async (newLogData: Omit<DailyLog, "id">, existingId?: string) => {
+    setIsSaving(true);
+    setApiError(null);
+
+    // Optimistic state update
+    const todayStr = newLogData.date || new Date().toISOString().split("T")[0];
+    const optimisticLog: DailyLog = {
+      ...newLogData,
+      id: existingId || `temp-${Date.now()}`,
+      date: todayStr,
+    };
+
+    setLogs((prev) => {
+      const idx = prev.findIndex((l) => l.date === todayStr || (existingId && l.id === existingId));
+      if (idx > -1) {
+        const copy = [...prev];
+        copy[idx] = { ...copy[idx], ...optimisticLog };
+        return copy;
+      }
+      return [...prev, optimisticLog];
+    });
+
+    try {
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      const res = await fetch("/api/logs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": activeUser,
+        },
+        body: JSON.stringify({
+          ...newLogData,
+          date: todayStr,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || `Failed to save log (${res.status})`);
+      }
+
+      const data = await res.json();
+      if (data.success && data.log) {
+        setLogs((prev) => {
+          const idx = prev.findIndex((l) => l.date === todayStr);
+          if (idx > -1) {
+            const copy = [...prev];
+            copy[idx] = data.log;
+            return copy;
+          }
+          return [...prev, data.log];
+        });
+      }
+    } catch (err: any) {
+      console.error("addOrUpdateLog error:", err);
+      setApiError(err.message || "Failed to persist to database.");
+    } finally {
+      setIsSaving(false);
     }
-
-    // Persist to MongoDB API
-    const currentUserId = localStorage.getItem("mindora_active_user") || userId;
-    fetch("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: currentUserId,
-        ...newLogData,
-      }),
-    }).catch((err) => console.warn("Failed to sync log to MongoDB:", err));
   };
 
   const deleteLog = (id: string) => {
     setLogs((prev) => prev.filter((log) => log.id !== id));
   };
 
-  const toggleHabit = (id: string) => {
-    const updatedHabits = habits.map((h) => (h.id === id ? { ...h, completed: !h.completed } : h));
-    setHabits(updatedHabits);
+  // Real MongoDB API: Toggle habit completion
+  const toggleHabit = async (id: string) => {
+    setApiError(null);
+    const todayStr = new Date().toISOString().split("T")[0];
 
-    // Persist to MongoDB API
-    const currentUserId = localStorage.getItem("mindora_active_user") || userId;
-    const completedIds = updatedHabits.filter((h) => h.completed).map((h) => h.id);
-    fetch("/api/habits", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: currentUserId,
-        completedHabitIds: completedIds,
-        streakCount: 12,
-      }),
-    }).catch((err) => console.warn("Failed to sync habits to MongoDB:", err));
+    // Optimistic toggle
+    setHabits((prev) =>
+      prev.map((h) => (h.id === id ? { ...h, completed: !h.completed } : h))
+    );
+
+    try {
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      const res = await fetch("/api/habits", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": activeUser,
+        },
+        body: JSON.stringify({
+          habitId: id,
+          date: todayStr,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to toggle habit in MongoDB.");
+      }
+
+      const data = await res.json();
+      if (data.success && data.habit) {
+        setHabits((prev) =>
+          prev.map((h) => (h.id === id ? { ...h, ...data.habit } : h))
+        );
+      }
+    } catch (err: any) {
+      console.error("toggleHabit error:", err);
+      setApiError(err.message || "Failed to update habit streak.");
+    }
+  };
+
+  // Real MongoDB API: Create habit
+  const createHabit = async (title: string, category: string, targetFrequency = "daily") => {
+    try {
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      const res = await fetch("/api/habits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": activeUser,
+        },
+        body: JSON.stringify({ title, category, targetFrequency }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.habit) {
+          setHabits((prev) => [...prev, data.habit]);
+        }
+      }
+    } catch (err: any) {
+      console.error("createHabit error:", err);
+    }
+  };
+
+  // Real MongoDB API: Delete habit
+  const deleteHabit = async (id: string) => {
+    setHabits((prev) => prev.filter((h) => h.id !== id));
+    try {
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      await fetch(`/api/habits?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "x-user-id": activeUser },
+      });
+    } catch (err) {
+      console.error("deleteHabit error:", err);
+    }
   };
 
   const toggleReminder = (id: string) => {
@@ -422,104 +444,130 @@ export function WellbeingProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const updateTodayMood = (newMood: MoodRating) => {
+  // Real MongoDB API: Update today's mood
+  const updateTodayMood = async (newMood: MoodRating) => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    const moodScore = newMood === 5 ? 10 : newMood === 4 ? 8 : newMood === 3 ? 6 : newMood === 2 ? 4 : 2;
+    const moodLabel = newMood >= 4 ? "Positive" : newMood === 3 ? "Neutral" : newMood === 2 ? "Negative" : "Depressed";
+
+    // Optimistic update
     setLogs((prev) => {
-      if (prev.length === 0) return prev;
+      if (prev.length === 0) return [fallbackTodayLog];
       const lastIndex = prev.length - 1;
       const updated = [...prev];
       updated[lastIndex] = {
         ...updated[lastIndex],
         mood: newMood,
+        moodScore,
       };
       return updated;
     });
 
-    // Persist to MongoDB API immediately
-    const currentUserId = localStorage.getItem("mindora_active_user") || userId;
-    const today = logs[logs.length - 1] || defaultLogs[defaultLogs.length - 1];
-    fetch("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId: currentUserId,
-        date: today.date,
-        dayLabel: today.dayLabel,
-        screenTimeHours: today.screenTimeHours,
-        socialMediaHours: today.socialMediaHours,
-        gamingHours: today.gamingHours,
-        sleepHours: today.sleepHours,
-        studyHours: today.studyHours,
-        breaksCount: today.breaksCount,
-        physicalActivityMinutes: today.physicalActivityMinutes,
-        mood: newMood,
-        privateNotes: today.privateNotes,
-        isAutoTracked: today.isAutoTracked,
-      }),
-    }).catch((err) => console.warn("Failed to sync mood to MongoDB:", err));
+    try {
+      const current = logs[logs.length - 1] || fallbackTodayLog;
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+
+      await fetch("/api/logs", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": activeUser,
+        },
+        body: JSON.stringify({
+          date: todayStr,
+          moodScore,
+          mood: moodLabel,
+          screenTimeHours: current.screenTimeHours,
+          sleepHours: current.sleepHours,
+          studyHours: current.studyHours,
+          socialMediaHours: current.socialMediaHours,
+          gamingHours: current.gamingHours,
+          breaksCount: current.breaksCount,
+          physicalActivityMinutes: current.physicalActivityMinutes,
+          notes: current.privateNotes || current.notes || "",
+        }),
+      });
+    } catch (err) {
+      console.error("updateTodayMood error:", err);
+    }
   };
 
   const enableAutoMonitoring = () => {
     setIsPermissionGranted(true);
     setIsAutoMonitoringEnabled(true);
     setSessionStatus("active");
+    try {
+      localStorage.setItem("mindora_auto_monitoring", "true");
+    } catch {}
   };
 
   const disableAutoMonitoring = () => {
     setIsAutoMonitoringEnabled(false);
     setSessionStatus("paused");
+    try {
+      localStorage.setItem("mindora_auto_monitoring", "false");
+    } catch {}
   };
 
   const pauseResumeAutoMonitoring = () => {
     setSessionStatus((prev) => (prev === "paused" ? "active" : "paused"));
   };
 
-  const syncAutoDataToToday = () => {
+  // Real MongoDB API: Sync Auto HUD metrics
+  const syncAutoDataToToday = async () => {
     if (logs.length > 0) {
       const today = logs[logs.length - 1];
       const updatedLog: DailyLog = {
         ...today,
         screenTimeHours: autoDetectedScreenHours,
         breaksCount: Math.max(today.breaksCount, autoDetectedBreaks),
-        studyHours: +(today.studyHours + (activeSessionSeconds / 3600)).toFixed(1),
+        studyHours: +(today.studyHours + activeSessionSeconds / 3600).toFixed(1),
         isAutoTracked: true,
       };
       setLogs((prev) => [...prev.slice(0, -1), updatedLog]);
 
-      // Persist auto-synced values to MongoDB
-      const currentUserId = localStorage.getItem("mindora_active_user") || userId;
-      fetch("/api/logs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: currentUserId,
-          ...updatedLog,
-        }),
-      }).catch((err) => console.warn("Auto-sync save to MongoDB:", err));
+      try {
+        const activeUser = localStorage.getItem("mindora_active_user") || userId;
+        await fetch("/api/logs", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-user-id": activeUser,
+          },
+          body: JSON.stringify(updatedLog),
+        });
+      } catch (err) {
+        console.error("syncAutoDataToToday error:", err);
+      }
     }
   };
 
-  const clearAllData = () => {
-    const currentUserId = localStorage.getItem("mindora_active_user") || userId;
-
-    // Purge records from MongoDB
-    fetch(`/api/privacy/purge?userId=${encodeURIComponent(currentUserId)}`, {
-      method: "DELETE",
-    }).catch((err) => console.warn("MongoDB purge error:", err));
+  // Real MongoDB API: Permanently purge all user records
+  const clearAllData = async () => {
+    try {
+      const activeUser = localStorage.getItem("mindora_active_user") || userId;
+      await fetch("/api/privacy/purge", {
+        method: "DELETE",
+        headers: { "x-user-id": activeUser },
+      });
+    } catch (err) {
+      console.warn("MongoDB purge error:", err);
+    }
 
     setLogs([]);
-    setHabits(defaultHabits.map((h) => ({ ...h, completed: false })));
+    setHabits([]);
     setIsAutoMonitoringEnabled(false);
     setIsPermissionGranted(false);
-    localStorage.removeItem("mindora_logs");
-    localStorage.removeItem("mindora_habits");
-    localStorage.removeItem("mindora_reminders");
-    localStorage.removeItem("mindora_auto_monitoring");
+    try {
+      localStorage.removeItem("mindora_logs");
+      localStorage.removeItem("mindora_habits");
+      localStorage.removeItem("mindora_reminders");
+      localStorage.removeItem("mindora_auto_monitoring");
+    } catch {}
   };
 
   const resetToDemoData = () => {
-    setLogs(defaultLogs);
-    setHabits(defaultHabits);
-    setReminders(defaultReminders);
+    refreshData();
   };
 
   return (
@@ -531,15 +579,22 @@ export function WellbeingProvider({ children }: { children: React.ReactNode }) {
         reminders,
         activeLog,
         habitCompletionRate,
+        isLoadingLogs,
+        isLoadingHabits,
+        isSaving,
+        apiError,
         addOrUpdateLog,
         deleteLog,
         toggleHabit,
+        createHabit,
+        deleteHabit,
         toggleReminder,
         updateReminderFrequency,
         updateTodayMood,
         clearAllData,
         resetToDemoData,
-        // Dual Monitoring System
+        refreshData,
+        // Dual Monitoring
         isAutoMonitoringEnabled,
         isPermissionGranted,
         activeSessionSeconds,

@@ -2,10 +2,9 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IUser extends Document {
   username: string;
-  email?: string;
-  passwordHash?: string;
-  authProvider: "credentials" | "google";
+  passwordHash: string;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 const UserSchema = new Schema<IUser>(
@@ -18,20 +17,9 @@ const UserSchema = new Schema<IUser>(
       lowercase: true,
       index: true,
     },
-    email: {
-      type: String,
-      trim: true,
-      lowercase: true,
-      default: undefined,
-    },
     passwordHash: {
       type: String,
-      default: undefined,
-    },
-    authProvider: {
-      type: String,
-      enum: ["credentials", "google"],
-      default: "credentials",
+      required: true,
     },
     createdAt: {
       type: Date,

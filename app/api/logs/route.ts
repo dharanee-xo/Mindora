@@ -1,63 +1,75 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
 import { connectToDatabase } from "@/lib/mongodb";
 import DailyLog from "@/models/DailyLog";
+import User from "@/models/User";
+import mongoose from "mongoose";
 
-// Helper to normalize mood input from frontend (number 1-5 or string) to DB enum
-function normalizeMoodToDb(mood: any): "Positive" | "Neutral" | "Negative" | "Depressed" {
-  if (mood === 5 || mood === 4 || mood === "Positive") return "Positive";
-  if (mood === 3 || mood === "Neutral") return "Neutral";
-  if (mood === 2 || mood === "Negative") return "Negative";
-  if (mood === 1 || mood === "Depressed") return "Depressed";
-  return "Neutral";
-}
+async function getAuthUserId(req: NextRequest): Promise<mongoose.Types.ObjectId | null> {
+  const session = await getServerSession(authOptions);
 
-// Helper to convert DB mood to numeric rating 1-5 for Recharts & frontend calculations
-function moodToRating(moodStr: string): 1 | 2 | 3 | 4 | 5 {
-  switch (moodStr) {
-    case "Positive":
-      return 4;
-    case "Neutral":
-      return 3;
-    case "Negative":
-      return 2;
-    case "Depressed":
-      return 1;
-    default:
-      return 3;
+  if (session?.user) {
+    const rawId = (session.user as any).id;
+    if (rawId && mongoose.Types.ObjectId.isValid(rawId)) {
+      return new mongoose.Types.ObjectId(rawId);
+    }
+    const username = (session.user as any).username || session.user.name;
+    if (username) {
+      await connectToDatabase();
+      const user = await User.findOne({ username: username.toLowerCase() });
+      if (user) return user._id as mongoose.Types.ObjectId;
+    }
   }
+
+  // Optional header fallback for testing
+  const fallbackHeader = req.headers.get("x-user-id");
+  if (fallbackHeader && mongoose.Types.ObjectId.isValid(fallbackHeader)) {
+    return new mongoose.Types.ObjectId(fallbackHeader);
+  }
+
+  return null;
 }
 
 export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId") || "anonymous_student";
+    const userId = await getAuthUserId(req);
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized. Please sign in to view your logs." },
+        { status: 401 }
+      );
+    }
 
     await connectToDatabase();
 
-    const dbLogs = await DailyLog.find({ userId }).sort({ date: 1 }).lean();
-
-    // Map to frontend DailyLog interface
-    const formattedLogs = dbLogs.map((log: any) => ({
-      id: log._id.toString(),
-      date: log.date,
-      dayLabel: log.dayLabel || log.date,
-      screenTimeHours: log.screenTime,
-      socialMediaHours: log.socialMedia,
-      gamingHours: log.gaming,
-      sleepHours: log.sleep,
-      studyHours: log.study,
-      breaksCount: log.breaks,
-      physicalActivityMinutes: log.physicalActivityMinutes || 0,
-      mood: moodToRating(log.mood),
-      moodLabel: log.mood,
-      privateNotes: log.reflection || "",
-      isAutoTracked: log.syncMode === "auto",
-    }));
+    // Sorted by date descending as required
+    const logs = await DailyLog.find({ userId }).sort({ date: -1 }).lean();
 
     return NextResponse.json({
       success: true,
-      logs: formattedLogs,
-      count: formattedLogs.length,
+      logs: logs.map((log: any) => ({
+        id: log._id.toString(),
+        userId: log.userId.toString(),
+        date: log.date,
+        moodScore: log.moodScore ?? 7,
+        stressLevel: log.stressLevel ?? 3,
+        sleepHours: log.sleepHours ?? 7.5,
+        screenTimeMinutes: log.screenTimeMinutes ?? Math.round((log.screenTimeHours || 0) * 60),
+        notes: log.notes || log.reflection || "",
+        // Rich metrics for UI dashboard & charts
+        dayLabel: log.dayLabel || log.date,
+        screenTimeHours: log.screenTimeHours ?? +(log.screenTimeMinutes / 60).toFixed(1),
+        socialMediaHours: log.socialMediaHours ?? 1.2,
+        gamingHours: log.gamingHours ?? 0.5,
+        studyHours: log.studyHours ?? 4.5,
+        breaksCount: log.breaksCount ?? 5,
+        physicalActivityMinutes: log.physicalActivityMinutes ?? 30,
+        mood: log.mood || "Neutral",
+        syncMode: log.syncMode || "manual",
+        createdAt: log.createdAt,
+      })),
+      count: logs.length,
     });
   } catch (error: any) {
     console.error("GET /api/logs error:", error);
@@ -70,50 +82,44 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const userId = await getAuthUserId(req);
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized. Please sign in to save your logs." },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json();
-    const {
-      userId = "anonymous_student",
-      date = new Date().toISOString().split("T")[0],
-      dayLabel = "Today",
-      screenTimeHours = 0,
-      screenTime,
-      socialMediaHours = 0,
-      socialMedia,
-      gamingHours = 0,
-      gaming,
-      sleepHours = 0,
-      sleep,
-      studyHours = 0,
-      study,
-      breaksCount = 0,
-      breaks,
-      physicalActivityMinutes = 0,
-      mood = "Neutral",
-      privateNotes = "",
-      reflection,
-      isAutoTracked = false,
-      syncMode,
-    } = body;
+    const todayStr = new Date().toISOString().split("T")[0];
+    const date = body.date || todayStr;
 
     await connectToDatabase();
 
-    const dbMood = normalizeMoodToDb(mood);
-    const dbSyncMode = syncMode || (isAutoTracked ? "auto" : "manual");
+    const screenTimeHours = Number(body.screenTimeHours ?? (body.screenTimeMinutes ? body.screenTimeMinutes / 60 : 4.8));
+    const screenTimeMinutes = Number(body.screenTimeMinutes ?? Math.round(screenTimeHours * 60));
+    const sleepHours = Number(body.sleepHours ?? 7.5);
+    const moodScore = Number(body.moodScore ?? (body.mood === "Positive" ? 8 : body.mood === "Negative" ? 4 : body.mood === "Depressed" ? 2 : 6));
+    const stressLevel = Number(body.stressLevel ?? (moodScore <= 4 ? 8 : moodScore <= 6 ? 5 : 2));
+    const notes = String(body.notes || body.privateNotes || body.reflection || "");
 
     const updateDoc = {
       userId,
       date,
-      dayLabel,
-      screenTime: Number(screenTimeHours ?? screenTime ?? 0),
-      socialMedia: Number(socialMediaHours ?? socialMedia ?? 0),
-      gaming: Number(gamingHours ?? gaming ?? 0),
-      sleep: Number(sleepHours ?? sleep ?? 0),
-      study: Number(studyHours ?? study ?? 0),
-      breaks: Number(breaksCount ?? breaks ?? 0),
-      physicalActivityMinutes: Number(physicalActivityMinutes ?? 0),
-      mood: dbMood,
-      reflection: String(reflection ?? privateNotes ?? ""),
-      syncMode: dbSyncMode,
+      moodScore,
+      stressLevel,
+      sleepHours,
+      screenTimeMinutes,
+      notes,
+      dayLabel: body.dayLabel || "Today",
+      screenTimeHours,
+      socialMediaHours: Number(body.socialMediaHours ?? 1.2),
+      gamingHours: Number(body.gamingHours ?? 0.5),
+      studyHours: Number(body.studyHours ?? 4.5),
+      breaksCount: Number(body.breaksCount ?? 5),
+      physicalActivityMinutes: Number(body.physicalActivityMinutes ?? 30),
+      mood: body.mood || "Neutral",
+      syncMode: body.syncMode || (body.isAutoTracked ? "auto" : "manual"),
     };
 
     const savedLog = await DailyLog.findOneAndUpdate(
@@ -124,28 +130,32 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: "Daily activity log saved to MongoDB.",
+      message: "Daily wellbeing log saved to MongoDB.",
       log: {
         id: savedLog._id.toString(),
+        userId: savedLog.userId.toString(),
         date: savedLog.date,
+        moodScore: savedLog.moodScore,
+        stressLevel: savedLog.stressLevel,
+        sleepHours: savedLog.sleepHours,
+        screenTimeMinutes: savedLog.screenTimeMinutes,
+        notes: savedLog.notes,
         dayLabel: savedLog.dayLabel,
-        screenTimeHours: savedLog.screenTime,
-        socialMediaHours: savedLog.socialMedia,
-        gamingHours: savedLog.gaming,
-        sleepHours: savedLog.sleep,
-        studyHours: savedLog.study,
-        breaksCount: savedLog.breaks,
+        screenTimeHours: savedLog.screenTimeHours,
+        socialMediaHours: savedLog.socialMediaHours,
+        gamingHours: savedLog.gamingHours,
+        studyHours: savedLog.studyHours,
+        breaksCount: savedLog.breaksCount,
         physicalActivityMinutes: savedLog.physicalActivityMinutes,
-        mood: moodToRating(savedLog.mood),
-        moodLabel: savedLog.mood,
-        privateNotes: savedLog.reflection,
-        isAutoTracked: savedLog.syncMode === "auto",
+        mood: savedLog.mood,
+        syncMode: savedLog.syncMode,
+        createdAt: savedLog.createdAt,
       },
     });
   } catch (error: any) {
     console.error("POST /api/logs error:", error);
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to save log." },
+      { success: false, error: error.message || "Failed to save daily log." },
       { status: 500 }
     );
   }

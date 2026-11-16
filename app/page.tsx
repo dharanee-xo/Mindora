@@ -9,15 +9,20 @@ import WellbeingSection from "@/components/wellbeing/WellbeingSection";
 import Footer from "@/components/Footer";
 import SplashScreen from "@/components/auth/SplashScreen";
 import LoginView from "@/components/auth/LoginView";
+import AuthFlowModal from "@/components/auth/AuthFlowModal";
 import TopMoodCheckInBar from "@/components/wellbeing/TopMoodCheckInBar";
 import TopMonitoringToggleBar from "@/components/wellbeing/TopMonitoringToggleBar";
 import { WellbeingProvider } from "@/context/WellbeingContext";
 import { ArrowRightIcon } from "@/components/Icons";
+import { useSession, signOut } from "next-auth/react";
 
 export default function Home() {
+  const { data: session } = useSession();
+
   // App Entry Flow: splash -> login -> dashboard
   const [rootFlowState, setRootFlowState] = useState<"splash" | "login" | "dashboard">("splash");
   const [currentUser, setCurrentUser] = useState<string | null>(null);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
   // 60-second breathing state
   const [breatheState, setBreatheState] = useState<"Inhale" | "Hold" | "Exhale">("Inhale");
@@ -27,6 +32,13 @@ export default function Home() {
   const [activeWellbeingTab, setActiveWellbeingTab] = useState<string>("dashboard");
 
   useEffect(() => {
+    if (session?.user) {
+      const handle = (session.user as any).username || session.user.name || "student";
+      setCurrentUser(handle);
+      setRootFlowState("dashboard");
+      return;
+    }
+
     try {
       const savedUser = localStorage.getItem("mindora_active_user");
       if (savedUser) {
@@ -35,7 +47,7 @@ export default function Home() {
     } catch (e) {
       console.warn("Storage check:", e);
     }
-  }, []);
+  }, [session]);
 
   const handleLoginSuccess = (identifier: string) => {
     setCurrentUser(identifier);
@@ -44,17 +56,19 @@ export default function Home() {
     } catch (e) {
       console.warn("Storage write error:", e);
     }
+    setIsAuthModalOpen(false);
     setRootFlowState("dashboard");
   };
 
-  const handleSignOut = () => {
+  const handleSignOut = async () => {
     setCurrentUser(null);
     try {
       localStorage.removeItem("mindora_active_user");
+      await signOut({ redirect: false });
     } catch (e) {
       console.warn("Storage clear error:", e);
     }
-    setRootFlowState("login");
+    setRootFlowState("splash");
   };
 
   const toggleBreathing = () => {
@@ -75,7 +89,7 @@ export default function Home() {
   };
 
   // ══════════════════════════════════════════════════════════════════
-  // 1. SPLASH SCREEN (2.2s auto-transition or Get Started)
+  // 1. SPLASH / LANDING SCREEN (Only Logo + Get Started CTA)
   // ══════════════════════════════════════════════════════════════════
   if (rootFlowState === "splash") {
     return (
@@ -86,15 +100,23 @@ export default function Home() {
 
         <div className="w-full max-w-md my-auto">
           <SplashScreen
-            onGetStarted={() => setRootFlowState("login")}
+            onGetStarted={() => setIsAuthModalOpen(true)}
           />
         </div>
+
+        {/* Authentication Flow Modal */}
+        <AuthFlowModal
+          isOpen={isAuthModalOpen}
+          initialView="login"
+          onClose={() => setIsAuthModalOpen(false)}
+          onLoginSuccess={handleLoginSuccess}
+        />
       </div>
     );
   }
 
   // ══════════════════════════════════════════════════════════════════
-  // 2. MINIMALIST APP-STYLE LOGIN VIEW (Real Google OAuth & Credentials)
+  // 2. MINIMALIST APP-STYLE LOGIN VIEW
   // ══════════════════════════════════════════════════════════════════
   if (rootFlowState === "login") {
     return (

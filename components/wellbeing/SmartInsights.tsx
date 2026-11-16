@@ -18,7 +18,24 @@ export default function SmartInsights() {
 
   const totalBreaks = logs.reduce((acc, l) => acc + l.breaksCount, 0);
 
+  const currentMoodScore = activeLog?.moodScore ?? (activeLog?.mood ? activeLog.mood * 2 : 7);
+  const currentStressLevel = activeLog?.stressLevel ?? 3;
+
   const insights = [
+    {
+      id: "insight-0",
+      title: "Mood Trend & Screen-Time Correlation",
+      highlight: `Mood: ${currentMoodScore}/10 • Stress: ${currentStressLevel}/10 • Screen: ${activeLog.screenTimeHours}h`,
+      type: currentMoodScore >= 7 ? "positive" : "gentle-nudge",
+      description:
+        currentMoodScore >= 7
+          ? `Your balanced digital leisure (${activeLog.screenTimeHours}h) correlates with a high emotional stability score of ${currentMoodScore}/10 and low stress (${currentStressLevel}/10). Restorative offline habits are shielding your cognitive bandwidth.`
+          : `High daily screen stimulation (${activeLog.screenTimeHours}h) correlates with an elevated stress level of ${currentStressLevel}/10 and a lower emotional score (${currentMoodScore}/10). Continuous cognitive input prevents neural decompression.`,
+      actionableTip:
+        currentMoodScore >= 7
+          ? "Maintain your current routine: Keep evening phone usage dim and take 5-minute movement pauses between tasks."
+          : "Actionable Nudge: Try a 20-minute device blackout before dinner or bedtime to allow dopamine baseline recovery.",
+    },
     {
       id: "insight-1",
       title: "Screen-Time & Sleep Rhythm Correlation",

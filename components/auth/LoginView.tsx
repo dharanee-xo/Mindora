@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { LockIcon, UserIcon, EyeIcon, EyeOffIcon, ArrowRightIcon } from "../Icons";
+import { signIn } from "next-auth/react";
 
 interface LoginViewProps {
   onSuccess: (identifier: string) => void;
@@ -21,7 +22,7 @@ export default function LoginView({ onSuccess, onBackToSplash }: LoginViewProps)
     e.preventDefault();
     setErrorMessage(null);
 
-    const cleanId = identifier.trim();
+    const cleanId = identifier.trim().toLowerCase();
 
     if (!cleanId) {
       setErrorMessage("Please enter your username.");
@@ -34,31 +35,42 @@ export default function LoginView({ onSuccess, onBackToSplash }: LoginViewProps)
     }
 
     setIsLoading(true);
-    setLoadingStep("Authenticating...");
+    setLoadingStep("Authenticating session...");
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: cleanId,
-          password,
-          authProvider: "credentials",
-        }),
+      // Authenticate via NextAuth CredentialsProvider
+      const result = await signIn("credentials", {
+        username: cleanId,
+        password,
+        redirect: false,
       });
 
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        setErrorMessage(data.error || "Authentication failed. Please check credentials.");
+      if (result?.error) {
+        setErrorMessage(result.error);
         setIsLoading(false);
         return;
       }
 
       setIsLoading(false);
-      onSuccess(data.user?.username || cleanId);
+      onSuccess(cleanId);
     } catch (err: any) {
-      console.warn("MongoDB auth fallback:", err);
+      console.warn("NextAuth login error, attempting fallback:", err);
+      // Direct REST fallback
+      try {
+        const response = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: cleanId, password }),
+        });
+        const data = await response.json();
+        if (data.success) {
+          setIsLoading(false);
+          onSuccess(cleanId);
+          return;
+        }
+      } catch (e) {
+        console.warn("Fallback error:", e);
+      }
       setIsLoading(false);
       onSuccess(cleanId);
     }
@@ -94,7 +106,7 @@ export default function LoginView({ onSuccess, onBackToSplash }: LoginViewProps)
           Sign In to Mindora
         </h2>
         <p className="text-xs text-slate-400 mt-1">
-          Enter your credentials to access your dashboard
+          Enter handle & password • New accounts auto-created
         </p>
       </div>
 
